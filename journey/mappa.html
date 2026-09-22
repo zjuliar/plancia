@@ -47,8 +47,9 @@
   --gov-aloe: #0b8a7c;
   --gov-ospite: #868e96;
   --raggio: 12px;
-  --rail: 150px;
-  --colonna: 150px;
+  --rail: 170px;
+  /* larghezza che non costringe a spezzare le parole: la mappa scorre in orizzontale */
+  --colonna: 232px;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -151,15 +152,28 @@ a { color: inherit; }
 .popover dd { margin: 0; color: var(--inchiostro); }
 
 /* ---------- mappa ---------- */
-.tela { background: var(--superficie); border: 1px solid var(--bordo); border-radius: 16px; overflow-x: auto; overscroll-behavior-x: contain; box-shadow: var(--ombra-card); }
+/* relative: senza un antenato posizionato gli h3 nascosti delle corsie (position:absolute)
+   sfuggono al clip e fanno scorrere in orizzontale tutta la pagina, non solo la mappa */
+.tela { position: relative; background: var(--superficie); border: 1px solid var(--bordo); border-radius: 16px; overflow-x: auto; overscroll-behavior-x: contain; box-shadow: var(--ombra-card); }
 .mappa { display: grid; grid-template-rows: repeat(10, auto); }
 .corsie, .fase { grid-row: 1 / span 10; display: grid; grid-template-rows: subgrid; }
 .corsie { grid-column: 1; position: sticky; left: 0; z-index: 4; background: var(--superficie); border-right: 1px solid var(--bordo); }
 .corsie > div { padding: 12px 14px; font-size: 12.5px; color: var(--inchiostro-2); border-bottom: 1px solid var(--griglia); display: flex; flex-direction: column; gap: 6px; }
 .corsie > div.vuota { border-bottom: 0; padding: 0; }
-.corsie .nome-rail { display: flex; align-items: center; gap: 7px; font-weight: 560; color: var(--inchiostro); }
+.corsie .nome-rail {
+  display: flex; align-items: center; gap: 6px; width: 100%; margin: 0; padding: 2px 4px 2px 0; border: 0; border-radius: 7px;
+  background: none; font: inherit; font-weight: 560; color: var(--inchiostro); text-align: left; cursor: pointer;
+}
+.corsie .nome-rail:hover { background: var(--velo); }
 .corsie .nome-rail svg { color: var(--tenue); flex: none; }
+.corsie .nome-rail .apri { transition: transform .18s ease; }
+.corsie .nome-rail[aria-expanded="true"] .apri { transform: rotate(90deg); }
 .corsie .nota-rail { font-size: 11.5px; color: var(--testo-tenue); font-weight: 400; }
+@media screen and (min-width: 861px) {
+  .cella.chiusa { padding-block: 3px; }
+  .cella.chiusa > :not(.nome-corsia) { display: none !important; }
+  .riga-rail.chiusa .nota-rail, .riga-rail.chiusa .legenda-linee { display: none; }
+}
 .legenda-linee { display: grid; gap: 4px; font-size: 11.5px; color: var(--testo-tenue); }
 .legenda-linee span { display: inline-flex; align-items: center; gap: 6px; }
 
@@ -209,7 +223,7 @@ a { color: inherit; }
 .evidenza .t { min-width: 0; }
 .fase:not(.aperta) .cella.evidenze { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
 .fase:not(.aperta) .evidenza { width: 100%; }
-.fase:not(.aperta) .evidenza .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fase:not(.aperta) .evidenza .t { text-wrap: pretty; }
 .fase:not(.aperta) .evidenza.extra { display: none; }
 .fase.aperta .piu { display: none; }
 .piu { align-self: flex-start; border: 0; background: none; padding: 1px 4px; font-size: 11.5px; color: var(--m); font-weight: 600; cursor: pointer; border-radius: 6px; }
@@ -245,7 +259,7 @@ a { color: inherit; }
 }
 .nodo:hover { border-color: var(--m); }
 .nodo[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--m); border-color: transparent; }
-.nodo .nome { font-weight: 540; text-wrap: pretty; overflow-wrap: break-word; padding-right: 14px; }
+.nodo .nome { font-weight: 540; text-wrap: pretty; padding-right: 14px; }
 .nodo .desc { display: none; font-size: 12.3px; color: var(--inchiostro-2); line-height: 1.38; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .fase.aperta .nodo .desc { display: -webkit-box; }
 .cella.retro .nodo { background: var(--superficie-2); box-shadow: none; }
@@ -577,7 +591,7 @@ const FLUSSI = DATI.flussi || [];
 const SCENARI = DATI.scenari || [];
 const GUIDA = DATI.domande_guida || [];
 
-const stato = { chi: "diretto", dove: "village", lente: "percorso", nodo: null, sintesi: null, sistema: null, elenco: false, aperta: null, pensieri: null };
+const stato = { chi: "diretto", dove: "village", lente: "percorso", nodo: null, sintesi: null, sistema: null, elenco: false, aperte: new Set(), chiuse: new Set(), pensieri: null };
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fase = (id) => FASI.find((f) => f.id === id) || {};
@@ -621,7 +635,13 @@ function leggiHash() {
   if (DOVE.some((x) => x.id === p.get("dove"))) stato.dove = p.get("dove");
   if (LENTI.some((x) => x.id === p.get("lente"))) stato.lente = p.get("lente");
   if (nodo(p.get("nodo"))) stato.nodo = p.get("nodo");
-  if (FASI.some((f) => f.id === p.get("fase"))) stato.aperta = p.get("fase");
+  // «fase» era una sola: si legge ancora, così i vecchi indirizzi non si rompono
+  for (const id of [...(p.get("fasi") || "").split(","), p.get("fase")]) {
+    if (FASI.some((f) => f.id === id)) stato.aperte.add(id);
+  }
+  for (const id of (p.get("chiuse") || "").split(",")) {
+    if (RIGHE.some((r) => r.id === id)) stato.chiuse.add(id);
+  }
   const s = Number(p.get("punto"));
   if (s >= 1 && s <= SINTESI.length) stato.sintesi = s - 1;
 }
@@ -630,7 +650,8 @@ function scriviHash() {
   if (stato.chi !== "diretto") p.set("chi", stato.chi);
   if (stato.dove !== "village") p.set("dove", stato.dove);
   if (stato.lente !== "percorso") p.set("lente", stato.lente);
-  if (stato.aperta) p.set("fase", stato.aperta);
+  if (stato.aperte.size) p.set("fasi", [...stato.aperte].join(","));
+  if (stato.chiuse.size) p.set("chiuse", [...stato.chiuse].join(","));
   if (stato.nodo) p.set("nodo", stato.nodo);
   if (stato.sintesi != null) p.set("punto", stato.sintesi + 1);
   const h = p.toString();
@@ -677,7 +698,7 @@ function costruisci() {
     let extra = "";
     if (r.id === "osp") extra = `<div class="legenda-linee">${CHI.map((c) => `<span data-p="${c.id}"><i class="tratto"></i>${esc(c.nome)}</span>`).join("")}</div>`;
     else if (r.nota) extra = `<span class="nota-rail">${esc(r.nota)}</span>`;
-    h += `<div class="${r.linea} ${r.id === "sistemi" ? "sistemi" : ""}"><span class="nome-rail">${ICONE[r.id] || ""}${esc(r.nome)}</span>${extra}</div>`;
+    h += `<div class="riga-rail ${r.linea} ${r.id === "sistemi" ? "sistemi" : ""}" data-corsia="${r.id}"><button class="nome-rail" type="button" data-corsia-tasto="${r.id}" aria-expanded="true">${ICONE.freccia.replace('<svg', '<svg class="apri"')}${ICONE[r.id] || ""}<span>${esc(r.nome)}</span></button>${extra}</div>`;
   });
   h += `</div>`;
 
@@ -729,8 +750,22 @@ function costruisci() {
   m.innerHTML = h;
 
   m.addEventListener("click", (e) => {
+    const ct = e.target.closest("[data-corsia-tasto]");
+    if (ct) {
+      const id = ct.dataset.corsiaTasto;
+      stato.chiuse.has(id) ? stato.chiuse.delete(id) : stato.chiuse.add(id);
+      aggiorna();
+      return;
+    }
     const af = e.target.closest("[data-apri-fase]");
-    if (af) { stato.aperta = stato.aperta === af.dataset.apriFase ? null : af.dataset.apriFase; aggiorna(); return; }
+    if (af) {
+      const id = af.dataset.apriFase;
+      // il «+N» delle evidenze apre soltanto: non richiude quello che stai guardando
+      if (stato.aperte.has(id) && !af.classList.contains("piu")) stato.aperte.delete(id);
+      else stato.aperte.add(id);
+      aggiorna();
+      return;
+    }
     const b = e.target.closest(".nodo");
     if (b) { apriNodo(b.dataset.id); return; }
     const ev = e.target.closest(".evidenza");
@@ -832,7 +867,8 @@ function legenda() {
       [`<svg width="30" height="14" aria-hidden="true"><path d="M0 4 H30" stroke="var(--p-diretto)" stroke-width="2.5"/><path d="M0 4 C10 4 10 11 18 11 H30" stroke="var(--p-ota)" stroke-width="2.5" fill="none"/></svg>`, "Le linee dei tre tipi di ospite: si separano dove il percorso cambia, corrono insieme dove è lo stesso. Tratteggio: differenza non verificata."],
       ['<span style="display:block;width:26px;border-top:1px dashed var(--asse)"></span>', "Linea d'interazione: sopra l'ospite, sotto ciò che incontra."],
       ['<span style="display:block;width:26px;border-top:2px solid var(--asse)"></span>', "Linea di visibilità: sotto, ciò che l'ospite non vede."],
-      ['<span class="nome-fase" style="font-size:12px;padding:0;margin:0">▸ Fase</span>', "Clicca il nome di una fase per aprirla."]
+      ['<span class="nome-fase" style="font-size:12px;padding:0;margin:0">▸ Fase</span>', "Clicca il nome di una fase per aprirla: se ne possono tenere aperte più di una."],
+      ['<span class="nome-fase" style="font-size:12px;padding:0;margin:0">▸ Corsia</span>', "Clicca il nome di una corsia, nella colonna a sinistra, per chiuderla o riaprirla."]
     ],
     esperienze: [
       ['<span class="capsula"><i class="seg v"></i><i class="seg no"></i><i class="seg no"></i></span>', "Le esperienze si vedono: Esposizione."],
@@ -890,6 +926,7 @@ function yDi(persona, faseId) {
   return st === "insieme" ? Y[persona].insieme : Y[persona].via;
 }
 function disegnaLinee() {
+  if (stato.chiuse.has("osp")) return;
   FASI.forEach((f, i) => {
     const svg = document.getElementById("linee-" + f.id);
     if (!svg) return;
@@ -928,9 +965,17 @@ function aggiorna() {
   const m = $("#mappa");
   m.dataset.lente = stato.lente;
   m.dataset.chi = stato.chi;
-  m.style.gridTemplateColumns = `var(--rail) ${FASI.map((f) => (f.id === stato.aperta ? "minmax(340px, 2.8fr)" : "minmax(var(--colonna), 1fr)")).join(" ")}`;
-  document.querySelectorAll(".fase").forEach((s) => s.classList.toggle("aperta", s.dataset.fase === stato.aperta));
-  document.querySelectorAll("[data-apri-fase]").forEach((b) => b.setAttribute("aria-expanded", String(b.dataset.apriFase === stato.aperta)));
+  m.style.gridTemplateColumns = `var(--rail) ${FASI.map((f) => (stato.aperte.has(f.id) ? "minmax(420px, 1.6fr)" : "minmax(var(--colonna), 1fr)")).join(" ")}`;
+  document.querySelectorAll(".fase").forEach((s) => s.classList.toggle("aperta", stato.aperte.has(s.dataset.fase)));
+  document.querySelectorAll(".nome-fase[data-apri-fase]").forEach((b) => b.setAttribute("aria-expanded", String(stato.aperte.has(b.dataset.apriFase))));
+  RIGHE.forEach((r) => {
+    const chiusa = stato.chiuse.has(r.id);
+    document.querySelectorAll(`.cella.${r.id}`).forEach((c) => c.classList.toggle("chiusa", chiusa));
+    const rail = m.querySelector(`.riga-rail[data-corsia="${r.id}"]`);
+    if (rail) rail.classList.toggle("chiusa", chiusa);
+    const tasto = m.querySelector(`[data-corsia-tasto="${r.id}"]`);
+    if (tasto) tasto.setAttribute("aria-expanded", String(!chiusa));
+  });
 
   const evidenza = stato.sintesi != null ? new Set(SINTESI[stato.sintesi].nodi) : null;
   m.classList.toggle("fuoco", !!evidenza);
